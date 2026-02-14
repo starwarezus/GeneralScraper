@@ -1,0 +1,62 @@
+{
+  "items": [
+    {
+      "brand": "stuart weitzman",
+      "model": "SD166",
+      "style": "GEMCUT 85 SANDAL",
+      "max_images": 5,
+      "notes": "Example from original request"
+    },
+    {
+      "brand": "Nike",
+      "model": "Air Max 270",
+      "style": "Running Shoe",
+      "color": "Black",
+      "max_images": 3,
+      "notes": "Popular running shoe"
+    },
+    {
+      "brand": "Adidas",
+      "style": "Ultraboost",
+      "color": "White",
+      "max_images": 4,
+      "notes": "Comfortable walking shoe"
+    },
+    {
+      "brand": "Puma",
+      "model": "RS-X",
+      "style": "Sneaker",
+      "color": "Red",
+      "max_images": 5,
+      "notes": "Retro style sneaker"
+    },
+    {
+      "brand": "New Balance",
+      "model": "990v5",
+      "color": "Gray",
+      "max_images": 3,
+      "notes": "Classic design"
+    },
+    {
+      "url": "https://tjmaxx.tjx.com/store/jump/product/Made-In-Spain-Suede-Gemcut-85-Heeled-Sandals/1001136525",
+      "max_images": 5,
+      "notes": "Using direct URL instead of search"
+    },
+    {
+      "brand": "Converse",
+      "model": "Chuck Taylor",
+      "style": "All Star",
+      "color": "Black",
+      "barcode": "889436589745",
+      "max_images": 5,
+      "notes": "Using barcode"
+    },
+    {
+      "brand": "Vans",
+      "style": "Old Skool",
+      "color": "Black/White",
+      "max_images": 4,
+      "notes": "Skateboarding classic"
+    }
+  ]
+}
