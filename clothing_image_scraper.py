@@ -513,6 +513,18 @@ class ClothingImageScraper:
         """
         upgraded = url
 
+        # Handle Amazon CDN image sizing patterns
+        # e.g., ._AC_SR146,146_ or ._SL1500_ or ._AC_SX679_ → ._AC_SL1500_
+        if 'media-amazon.com' in upgraded or 'images-amazon.com' in upgraded:
+            upgraded = re.sub(
+                r'\._[A-Z]{2}[_A-Z]*(?:SR|SX|SY|SL|SS|CR|UX|UY)\d+[,\d]*_?',
+                '._AC_SL1500_',
+                upgraded
+            )
+            # Also fix truncated URLs missing file extension
+            if not re.search(r'\.(jpe?g|png|webp|gif)(\?|$)', upgraded, re.I):
+                upgraded += '.jpg'
+
         # Remove size suffixes from filename
         for suffix in URL_SIZE_PATTERNS['suffixes_to_remove']:
             if suffix in upgraded:
