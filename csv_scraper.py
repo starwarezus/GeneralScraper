@@ -65,6 +65,7 @@ class CSVBatchScraper:
             'total_items': 0,
             'successful': 0,
             'failed': 0,
+            'low_res_only': 0,
             'total_images': 0,
             'start_time': None,
             'end_time': None
@@ -225,13 +226,15 @@ class CSVBatchScraper:
             # Handle both old (list) and new (dict) return formats
             if isinstance(result, dict):
                 files = result.get('files', [])
+                low_res_files = result.get('low_res_files', [])
                 metadata = result.get('metadata', {})
             else:
                 files = result
+                low_res_files = []
                 metadata = {}
-            
+
             num_images = len(files)
-            
+
             if num_images > 0:
                 self.log(f"✓ Success! Downloaded {num_images} images", 'SUCCESS')
                 
@@ -285,9 +288,27 @@ class CSVBatchScraper:
                 
                 self.stats['successful'] += 1
                 self.stats['total_images'] += num_images
+            elif low_res_files:
+                self.log(f"⚠ No high-res images found, {len(low_res_files)} low-res saved", 'WARNING')
+
+                # Add low-res-only item to report
+                self.report_data.append({
+                    'Brand': brand or '',
+                    'Model': model or '',
+                    'Style': style or '',
+                    'Color': color or '',
+                    'Barcode': barcode or '',
+                    'Search_Query': ', '.join(metadata.get('search_terms', {}).get('queries', [])) if metadata else '',
+                    'Image_Filename': 'LOW-RES ONLY',
+                    'Image_URL': 'N/A',
+                    'Source': 'N/A',
+                    'Notes': notes or ''
+                })
+
+                self.stats['low_res_only'] += 1
             else:
                 self.log(f"✗ No images found", 'WARNING')
-                
+
                 # Add failed item to report
                 self.report_data.append({
                     'Brand': brand or '',
@@ -301,7 +322,7 @@ class CSVBatchScraper:
                     'Source': 'N/A',
                     'Notes': notes or ''
                 })
-                
+
                 self.stats['failed'] += 1
             
             return num_images
@@ -370,6 +391,8 @@ class CSVBatchScraper:
         self.log("="*70, 'INFO')
         self.log(f"Total Items Processed: {self.stats['total_items']}", 'INFO')
         self.log(f"Successful: {self.stats['successful']}", 'SUCCESS')
+        if self.stats['low_res_only'] > 0:
+            self.log(f"Low-res only: {self.stats['low_res_only']}", 'WARNING')
         self.log(f"Failed: {self.stats['failed']}", 'ERROR' if self.stats['failed'] > 0 else 'INFO')
         self.log(f"Total Images Downloaded: {self.stats['total_images']}", 'SUCCESS')
         self.log(f"Duration: {duration:.1f} seconds ({duration/60:.1f} minutes)", 'INFO')

@@ -15,6 +15,9 @@ HASH_INDEX_FILE = "image_hashes.json"  # Persistent hash index file path
 # Image Quality
 MIN_IMAGE_WIDTH = 500   # Minimum acceptable image width in pixels
 MIN_IMAGE_HEIGHT = 500  # Minimum acceptable image height in pixels
+MIN_LOW_RES_WIDTH = 100   # Below this width = thumbnail (discard)
+MIN_LOW_RES_HEIGHT = 100  # Below this height = thumbnail (discard)
+LOW_RES_SUBFOLDER = "low-res"  # Subfolder for low-res images
 
 # Timeouts
 METHOD_TIMEOUT = 15  # Per-method timeout in seconds

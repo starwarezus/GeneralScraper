@@ -51,7 +51,8 @@ except ImportError:
 
 from scraper_config import (
     CONFIDENCE_THRESHOLD, HASH_SIMILARITY_THRESHOLD, HASH_INDEX_FILE,
-    MIN_IMAGE_WIDTH, MIN_IMAGE_HEIGHT, METHOD_TIMEOUT,
+    MIN_IMAGE_WIDTH, MIN_IMAGE_HEIGHT, MIN_LOW_RES_WIDTH, MIN_LOW_RES_HEIGHT,
+    LOW_RES_SUBFOLDER, METHOD_TIMEOUT,
     RELIABLE_RETAILERS, URL_SIZE_PATTERNS, HIGHRES_ATTRIBUTES,
     SITE_SPECIFIC_SEARCHES, OCR_ENABLED, OCR_CONFIDENCE_BOOST,
     BROWSER_HEADLESS, BROWSER_TIMEOUT,
@@ -69,6 +70,8 @@ class ClothingImageScraper:
         """
         self.download_path = Path(download_path)
         self.download_path.mkdir(parents=True, exist_ok=True)
+        self.low_res_path = self.download_path / LOW_RES_SUBFOLDER
+        self.low_res_path.mkdir(parents=True, exist_ok=True)
 
         # Rotating user agents to avoid detection
         self.user_agents = [
@@ -125,6 +128,7 @@ class ClothingImageScraper:
         self.quality_stats = {'checked': 0, 'passed': 0, 'failed': 0, 'upgraded': 0}
         self._borderline_urls = {}  # Populated during verification for OCR rescue
         self.captcha_stats = {'detected': 0, 'urls': []}  # CAPTCHA tracking
+        self.low_res_stats = {'saved': 0, 'items_low_res_only': 0}
 
     def _update_headers(self):
         """Update session headers with a new user agent"""
@@ -658,26 +662,31 @@ class ClothingImageScraper:
             filepath: Path to the downloaded image
 
         Returns:
-            Tuple of (passes: bool, width: int, height: int)
+            Tuple of (quality_level: str, width: int, height: int)
+            quality_level is 'high_res', 'low_res', or 'thumbnail'
         """
         self.quality_stats['checked'] += 1
         if not PILLOW_AVAILABLE:
             self.quality_stats['passed'] += 1
-            return True, 0, 0
+            return 'high_res', 0, 0
 
         try:
             with PILImage.open(filepath) as img:
                 width, height = img.size
             if width >= MIN_IMAGE_WIDTH and height >= MIN_IMAGE_HEIGHT:
                 self.quality_stats['passed'] += 1
-                return True, width, height
+                return 'high_res', width, height
+            elif width >= MIN_LOW_RES_WIDTH and height >= MIN_LOW_RES_HEIGHT:
+                self.quality_stats['failed'] += 1
+                print(f"  Low-res image ({width}x{height} < {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}): {Path(filepath).name}")
+                return 'low_res', width, height
             else:
                 self.quality_stats['failed'] += 1
-                print(f"  Warning: Image below minimum quality ({width}x{height} < {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}): {Path(filepath).name}")
-                return False, width, height
+                print(f"  Thumbnail discarded ({width}x{height} < {MIN_LOW_RES_WIDTH}x{MIN_LOW_RES_HEIGHT}): {Path(filepath).name}")
+                return 'thumbnail', width, height
         except Exception:
             self.quality_stats['passed'] += 1
-            return True, 0, 0
+            return 'high_res', 0, 0
 
     # ── Existing Utility Methods ─────────────────────────────────────────
 
@@ -1843,7 +1852,8 @@ class ClothingImageScraper:
             item_name: Item name for hash index
 
         Returns:
-            True if successful, False otherwise
+            True if high-res, 'low_res' if low-res (moved to low-res folder),
+            False if failed/duplicate/thumbnail
         """
         try:
             response = self.session.get(url, timeout=15, stream=True)
@@ -1880,10 +1890,27 @@ class ClothingImageScraper:
             self.hash_index.add_image(filepath, item_name)
 
             # Post-download quality check
-            passes, width, height = self._check_image_quality(filepath)
-            if not passes:
-                # Keep the image but log the warning (don't delete - it's still useful)
-                print(f"  Low quality image kept: {Path(filepath).name} ({width}x{height})")
+            quality_level, width, height = self._check_image_quality(filepath)
+            if quality_level == 'low_res':
+                # Move to low-res subfolder
+                low_res_filepath = self.low_res_path / Path(filepath).name
+                try:
+                    import shutil
+                    shutil.move(str(filepath), str(low_res_filepath))
+                    self.low_res_stats['saved'] += 1
+                    print(f"  Low-res saved: {low_res_filepath}")
+                    return 'low_res'
+                except Exception as e:
+                    print(f"  Error moving low-res image: {e}")
+                    return 'low_res'
+            elif quality_level == 'thumbnail':
+                # Delete thumbnail
+                try:
+                    os.remove(filepath)
+                    self.hash_index.remove_image(str(filepath))
+                except OSError:
+                    pass
+                return False
 
             print(f"Downloaded: {filepath}")
             return True
@@ -1909,6 +1936,7 @@ class ClothingImageScraper:
             Dictionary with downloaded files and metadata
         """
         downloaded_files = []
+        low_res_files = []
         item_data = {
             'brand': brand,
             'model': model,
@@ -1946,7 +1974,7 @@ class ClothingImageScraper:
 
             if not queries:
                 print("No valid search parameters provided!")
-                return {'files': downloaded_files, 'metadata': {'search_terms': {}, 'sources': [], 'image_urls': []}}
+                return {'files': downloaded_files, 'low_res_files': low_res_files, 'metadata': {'search_terms': {}, 'sources': [], 'image_urls': []}}
 
             # Use exhaustive scraping methods
             image_urls, seen_sigs, search_metadata = self._try_scraping_methods(queries, max_images, item_data)
@@ -1992,7 +2020,7 @@ class ClothingImageScraper:
         # Download images
         if not image_urls:
             print("No images found!")
-            return {'files': downloaded_files, 'metadata': search_metadata}
+            return {'files': downloaded_files, 'low_res_files': low_res_files, 'metadata': search_metadata}
 
         print(f"\nFound {len(image_urls)} verified images")
         print("Downloading images...")
@@ -2006,7 +2034,16 @@ class ClothingImageScraper:
             filename = self.build_filename(brand, barcode, model, color, style, download_idx)
             filepath = self.download_path / filename
 
-            if self.download_image(img_url, filepath, item_name=item_name):
+            dl_result = self.download_image(img_url, filepath, item_name=item_name)
+
+            if dl_result == 'low_res':
+                # Low-res: track but don't count toward max_images, keep searching
+                low_res_files.append(str(self.low_res_path / Path(filepath).name))
+                download_idx -= 1  # Don't increment index for low-res
+                time.sleep(0.5)
+                continue
+
+            if dl_result is True:
                 # Post-download OCR verification for borderline images
                 borderline_info = getattr(self, '_borderline_urls', {}).get(img_url)
                 if borderline_info is not None:
@@ -2048,6 +2085,10 @@ class ClothingImageScraper:
 
             time.sleep(0.5)  # Be polite to servers
 
+        # Track items that only had low-res results
+        if not downloaded_files and low_res_files:
+            self.low_res_stats['items_low_res_only'] += 1
+
         # Add to download report with detailed image info
         report_entry = {
             'brand': brand or '',
@@ -2058,6 +2099,8 @@ class ClothingImageScraper:
             'url': specific_url or '',
             'success': len(downloaded_files) > 0,
             'num_images': len(downloaded_files),
+            'low_res_images': len(low_res_files),
+            'low_res_only': len(downloaded_files) == 0 and len(low_res_files) > 0,
             'images': [],
         }
 
@@ -2074,7 +2117,7 @@ class ClothingImageScraper:
 
         self.download_report.append(report_entry)
 
-        return {'files': downloaded_files, 'metadata': search_metadata}
+        return {'files': downloaded_files, 'low_res_files': low_res_files, 'metadata': search_metadata}
 
     def _create_image_signature(self, url):
         """
@@ -2107,6 +2150,7 @@ class ClothingImageScraper:
             'methods': dict(self.method_stats),
             'quality': dict(self.quality_stats),
             'captcha': dict(self.captcha_stats),
+            'low_res': dict(self.low_res_stats),
             'hash_report': self.hash_index.get_duplicate_report(),
         }
 
@@ -2141,9 +2185,14 @@ def main():
     )
 
     files = result.get('files', [])
-    print(f"\nDownloaded {len(files)} images:")
+    low_res_files = result.get('low_res_files', [])
+    print(f"\nDownloaded {len(files)} high-res images:")
     for f in files:
         print(f"  - {f}")
+    if low_res_files:
+        print(f"\nLow-res images ({len(low_res_files)} saved to low-res/):")
+        for f in low_res_files:
+            print(f"  - {f}")
 
     # Print run summary
     summary = scraper.get_run_summary()
@@ -2155,6 +2204,9 @@ def main():
         print(f"  OCR: {ocr_rescued} rescued, {ocr_confirmed} confirmed")
     print(f"Duplicates: {summary['duplicates']['exact']} exact, {summary['duplicates']['perceptual']} perceptual")
     print(f"Quality: {summary['quality']['checked']} checked, {summary['quality']['passed']} passed, {summary['quality']['failed']} below threshold")
+    low_res = summary.get('low_res', {})
+    if low_res.get('saved', 0) or low_res.get('items_low_res_only', 0):
+        print(f"Low-res: {low_res['saved']} saved, {low_res['items_low_res_only']} items low-res only")
     captcha_count = summary['captcha']['detected']
     if captcha_count:
         print(f"CAPTCHAs: {captcha_count} detected and skipped")
